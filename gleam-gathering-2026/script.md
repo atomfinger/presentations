@@ -49,3 +49,40 @@ I was 3 hours delayed. So I grabbed my laptop and started rage-coding, which bec
 Surtoget.
 [Show screenshot of the website]
 
+//TODO: Explain Surtoget?
+
+Surtoget is a cheeky little website which aim to highlight the inadiquies of the
+Sørlandsbanen. This is, however bigger than me: Students risk not getting grades
+due to their absenc due to delays on the train. Adults are consistently late
+in their commute.
+
+Don't worry, I'll get to Gleam.
+
+//TODO: ALL ABOUT SURTOGET
+
+Alright, so finally, Gleam. Let's talk about it!
+
+When I made Surtoget I landet on Gleam. There were multiple reasons for that.
+
+In the last few years I've become very aware of the synthatical bloat a lot of
+languages have. For example, for fun I wanted to see how many pages the
+C# language reference is, and the PDF is 2100 pages! I did the same with Java,
+wich is 1300 ish.
+
+What about Gleam though? Gleam rocks a nice 69 pages!
+
+C# has, according to its language specification, 125 keywords while Gleam has about 22 that is reserved.
+
+None of the above says that one is better than the other, but it does say something about
+the complexity of the language itself. Louis himself has stated that he wants to keep
+the core language small and focused. And this is what I wanted for when making my silly
+little website.
+
+Why does language complextiy matter? Well, it matters because the more options a language
+provides, the more bullets you have to shoot youself with. It hurts readability as more
+semantics and synthatical variety can exist. It adds to the mental burden both while
+reading and writing code.
+
+But the goal was not just to make a silly little website, but also to look at the language
+and its ability to do more than just silly websites. The thing is: I've started to grow
+vary of the bloat I see at a daily.
