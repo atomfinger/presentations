@@ -1,0 +1,1 @@
+-record(valid_email, {value :: binary()}).

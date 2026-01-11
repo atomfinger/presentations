@@ -58,6 +58,9 @@ who has a knack for architecture so that we have maintainable, robust, scalable 
 This has always been the case, and it is still the case. So how does one get these skills then? How does
 one learn how to develop such systems?
 
+Here I want to go back to the Measuring the Impact of Early-2025 AI on
+Experienced Open-Source Developer Productivity study, and look at this graph
+
 Easy: You build systems, you learn from mistakes, and you build up an intuition about what is right when
 you write your code. The problem with AI is that it hijacks this learning process. Rather than building
 your intution, it just generates something for you. It sits between you and the code in such a way
@@ -128,18 +131,22 @@ just writing code, but we also don't just "solve problems". We're not glorified
 Let's summarise the job of a developer:
 "A software developer maintains and evolves a technical solution to remain competative"
 
-I know, it sounds boring: "Remain competative", but that is really the case. If what we do
-isn't competative, then the company will, eventually, go bust and we're out of a job.
-
-So let's unpack the statement and look closer at it:
+I know, it sounds boring, so let's unpack the statement and look closer at it:
 By "maintaining" and "evolving" I simply mean the regular stuff: Update dependencies, fixing
 bugs, adding new features, etc. Combined that concept with "competative" means that
 these things need to happen in a reasonable timeframe as not to be outpaced by competitors.
 
-But "competitive" means more than just adding features. It also means doing so in a way
-that doesn't generate a bunch of other work. If for every change we make we also introduce
-a bunch of new bugs, then we're both frustrating the users and also reducing our ability
-to keep up as we always have to go back and re-do a bunch of work.
+But "competitive" does not just translate to companies. Software without users is more or less
+pointless. So even free open-source projects needs to be competitive to have users.
+
+Being "competitive" is not just about adding features. It also means doing so in a way
+that doesn't generate a bunch of extra work. Let's say that for every change we make we also introduce
+a bunch of new bugs, then we're both frustrating the users and also reducing our ability to evolve
+the solution since every change results in us having to go back and re-do a bunch of work.
+
+The word "remain" is also immensly important, because we need think about the long-term impact of our
+code, not just the emidiate feature. We have to think about how we implement so that it
+doesn't limit us in the future.
 
 This means that our job is not only to create a solution that is working, but also one
 that can be reliably changed over time. And to do this we need to consider a bunch of things:
@@ -150,15 +157,9 @@ that can be reliably changed over time. And to do this we need to consider a bun
 - Observability
 - Etc
 
-All of this goes beyond just making something that "works". That something works is good enough
-today, but we're also responsible for setting the codebase (and by proxy the company) up for
-long-term success.
+If all you do is having "working" as the bare minimum threshold, you end up in the tech debt
+death spiral:
 
-To achieve this you cannot set the bar at "it works". It also needs to be good. And I want you
-to practice that in your current work. Sure, get it to work first - sometimes that is challenging
-enough. But once you've made it work, then try to make it good.
-
-This also plays into the concept of technical debt, which is a huge problem in the industry...
 *TODO*
 
 It is also perfectly okay not knowing what "good" even is, but try things out. Try different
@@ -409,4 +410,8 @@ separate from other methods. It allows you to write code while also verify and d
 needing a "complete" system.
 
 If I had written tests when I was a student I would've caught so many issues and overall saved
-so much time. It is 100% worth it for larger assignments. 
+so much time. It is 100% worth it for larger assignments.
+
+Let me demonstrate...
+
+*TODO FIND OLD ASSIGNMENT AND SHOW HOW WE CAN DO IT?*
