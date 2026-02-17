@@ -4,6 +4,18 @@
 -export([main/0]).
 
 -file("src/demo.gleam", 4).
--spec main() -> nil.
+-spec main() -> {ok, nil} | {error, binary()}.
 main() ->
-    gleam_stdlib:println(<<"Hello from demo!"/utf8>>).
+    gleam@result:'try'(
+        safe_email_sender:new(<<"wibbly@wobbly.wabbely"/utf8>>),
+        fun(Good_email_result) ->
+            _ = safe_email_sender:send_welcome_email(Good_email_result),
+            gleam@result:'try'(
+                safe_email_sender:new(<<"wibbly"/utf8>>),
+                fun(Bad_email_result) ->
+                    _ = safe_email_sender:send_welcome_email(Bad_email_result),
+                    {ok, nil}
+                end
+            )
+        end
+    ).

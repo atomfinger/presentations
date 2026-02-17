@@ -1,0 +1,1 @@
+-record(verified_email, {value :: email:valid_email()}).

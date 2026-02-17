@@ -4,7 +4,8 @@
                     gleeunit]},
     {description, ""},
     {modules, [demo,
-               email_validator,
+               email,
+               naive_email_sender,
                safe_email_sender,
                unsafe_email_sender]},
     {registered, []}
