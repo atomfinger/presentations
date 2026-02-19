@@ -5,15 +5,15 @@ pub opaque type ValidEmail {
 }
 
 pub opaque type RegisteredEmail {
-  RegisteredEmail(value: ValidEmail)
+  RegisteredEmail(value: String)
 }
 
 pub opaque type VerifiedEmail {
-  VerifiedEmail(value: RegisteredEmail)
+  VerifiedEmail(value: String)
 }
 
 pub opaque type WelcomeEmailRecipient {
-  WelcomeEmailRecipient(value: VerifiedEmail)
+  WelcomeEmailRecipient(value: String)
 }
 
 pub fn validate_email(input: String) -> Result(ValidEmail, String) {
@@ -25,14 +25,14 @@ pub fn validate_email(input: String) -> Result(ValidEmail, String) {
 
 pub fn register_email(email: ValidEmail) -> Result(RegisteredEmail, String) {
   case email_already_registered(email) {
-    False -> Ok(RegisteredEmail(email))
+    False -> Ok(RegisteredEmail(email.value))
     True -> Error("Email already registered")
   }
 }
 
 pub fn verify_email(email: RegisteredEmail) -> Result(VerifiedEmail, String) {
   case verification_confirmed(email) {
-    True -> Ok(VerifiedEmail(email))
+    True -> Ok(VerifiedEmail(email.value))
     False -> Error("Email not verified")
   }
 }
@@ -42,7 +42,7 @@ pub fn make_welcome_recipient(
 ) -> Result(WelcomeEmailRecipient, String) {
   case welcome_already_sent(email) {
     True -> Error("Welcome email already sent")
-    False -> Ok(WelcomeEmailRecipient(email))
+    False -> Ok(WelcomeEmailRecipient(email.value))
   }
 }
 
