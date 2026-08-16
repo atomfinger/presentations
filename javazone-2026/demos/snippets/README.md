@@ -78,6 +78,26 @@ each, rather than introducing a whole new unrelated concept per slide.
   rather than receiving on one the test created for it, or every attempt
   panics instead of timing out.
 
+- `src/reset_password_use.gleam` - deliberately **not** a real
+  implementation. Every validation step (`parse`, `find_registration`,
+  `require_verified`, `send_password_reset`) is a `todo` stub - the point
+  isn't email validation, it's showing what chaining several
+  Result-returning steps actually looks like wired together, using `use`
+  with `result.try`, instead of the nested `case` pyramid you'd get
+  unwrapping each `Result` by hand. Reuses the exact
+  `Email -> RegisteredEmail -> VerifiedEmail` chain from the Typing
+  section's smart-constructor example - this is that same chain, actually
+  called in sequence, for the "doesn't all this Result stuff get
+  cumbersome?" answer in the Errors section.
+
+  No test file for this one, on purpose: every function is a `todo`, so
+  calling any of them crashes by design (verified by hand while writing
+  it - `reset_password("test@example.com")` compiles clean and then
+  crashes exactly at the first `todo`, with its message, the moment
+  `main` actually calls it). There's no real behaviour here to assert
+  against - `gleam build` succeeding *is* the check for a slide whose
+  only job is to type-check and show the shape of `use`.
+
 ## Development
 
 ```sh

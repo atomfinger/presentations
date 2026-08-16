@@ -89,13 +89,31 @@ So let's think about language machines in a different way. Rather than thinking 
 
 [Show fictional VM slide]
 
-Let's come up with a VM which can run in a cluster, on different machines even. And let's say that each process within that VM is this tiny virtual thread, kinda like Kotlin Coroutines or green threads we got in Java 21.
+Let's come up with our own VM. Let's call it Cool-VM™.
 
-Now, for these threads to communicate, we build messaging into the language and VM itself.
+The first decision we make is that it is functional and immutable. Why? Because those things are neat.
 
-And since we have full control over these processes, we can build supervisors around them for reliability, so they can scale as traffic comes in and handle process failures elegantly. 
+We also know that we have pretty beefy processors these days, so we should utilizw that. So let's optimise Cool-VM™ for tiny virtual threads, kinda like Kotlin Coroutines or green threads we got in Java 21.
 
-Now we've created something pretty different from the JVM. Now we have a VM that is also aware of other instances, where processes within them can communicate. And the thing we created is Beam, which is the VM that Erlang, Elixir and Gleam use.
+We do want to keep things tidy. We don't want threads to crash each other, so to keep things safe, we won't allow state to be shared. Instead, we'll only allow them to communicate through passing messages back and forth, not unlike MQ. And we'll make message passing a first-class citizen of the language we're putting on top.
+
+And since we have full control over these processes, we can build supervisors around them to ensure reliability, so they can scale as traffic comes in and handle process failures gracefully. That means that if an "instance" of our code blows up, then a new one will be spun up automatically.
+
+We also know that we live in a world where we have multiple systems wanting to communicate, so why not just allow different instances of our Cool-VM™ join together into a cluster?
+
+Given that we also have a working cluster, let's make things a little easier to use. Let's add some common things we know that we will need, like service discovery, maybe a cache... and heck, let's throw in a database for good measure.
+
+Our Cool-VM™ is starting to look mighty powerful, and given its utility, we can now look at how this impacts our abstraction stack:
+
+[Show slide with abstraction stack again]
+
+Previously, we managed to eliminate the language VM by compiling directly to machine code, but now there's a third way to think about this. Assuming the language VM is sophisticated enough, it might also replace things like the container or Kubernetes:
+
+[Show slide with abstraction stack with VM-instead-of-container]
+
+Now we've created something pretty different from the JVM. Now we have a VM that is also aware of other instances, allowing processes to communicate. And the thing we created is Beam, the VM that Erlang, Elixir, and Gleam use.
+
+Just to be clear: You can still run BEAM and Gleam within a container, just as you can with the JVM. A lot of people do this, and it works equally well.
 
 ---
 
@@ -167,103 +185,13 @@ It turns out that a lot of this "telecom stuff" isn't that different than what t
 
 This is also where the famous Erlang war story comes from. Ericsson's AXD301 switch, built on top of all this, became legendary for a claimed 99.9999999% availability - nine nines - which works out to about 31 milliseconds of downtime a year. I want to be upfront that this exact number is contested: it traces back to a single customer's marketing slide covering a limited sample of node-years, and even Joe Armstrong's own PhD thesis admits the methodology behind it was never properly documented. So don't take "nine nines" as gospel if you get an argumentative question about it afterwards. What is defensible is that it really was an unusually reliable system, and the architecture behind it - process isolation, supervision, OTP - is the real, lasting lesson, whether or not the exact number holds up.
 
-### Seeing the cluster live
-
-[Terminal 1 visible on screen - the central node]
-
-That's all history, though - I don't want to just claim any of this. Let's actually show you the cluster thing. And we're going to keep it deliberately silly: distributed fizz-buzz.
-
-One node - I'll call it `central` - owns the entire fizz-buzz logic. Every other node knows nothing about fizz-buzz at all. It just sends `central` a number over the network and prints back whatever answer comes.
-
-[Show slide: "if this were Java..."]
-
-Before I show you this actually working, I want to pause on something, because I think it's easy to let this slide past unremarked: what would it actually take to build this exact thing in Java? Not at some hyperscale company - just me, on my own laptop, three separate JVM processes that need to find each other and exchange a message.
-
-I'd basically have three options, and none of them are free.
-
-Option one: Java RMI. It's actually built into the JDK, so credit where it's due - this is the closest Java equivalent of "just call a function on another process." But to get there I need to define a `Remote` interface, extend `UnicastRemoteObject`, and either run the standalone `rmiregistry` process or stand up an embedded one myself in code - either way, I have to explicitly create that registry and explicitly bind my service into it under a name, myself, as application-level work. And then every argument and return value needs to implement `Serializable`, and the classpath needs to line up across every JVM, or you get a runtime error instead of a compile error. It's also, in practice, mostly abandoned - I doubt many of you have touched RMI in years, and Java itself has been quietly deprecating parts of it.
-
-Option two: roll it myself over plain sockets, or HTTP. Now I'm writing my own wire format, or reaching for JSON, defining request/response shapes by hand, correlating requests to replies myself, and writing my own reconnect-and-retry logic for when a node goes away. That's not an afternoon project, that's a small library.
-
-Option three: something like gRPC, or a REST API behind Spring Boot. Genuinely solid, well-trodden tools. But now I need a schema file - protobuf or an OpenAPI spec - a server, a generated or hand-written client, and, critically, *service discovery*: something that tells every other node the IP and port `central` is actually listening on right now. Locally that might be a hardcoded `localhost:8080`, fine for a demo, but the moment this needs to survive `central` restarting on a different port, or moving to a different machine, I'm reaching for Eureka, or Consul, or Kubernetes DNS and Service objects - another whole system to run and operate, just so processes can find each other.
-
-[Show slide: "on Beam..."]
-
-Now, to be fair to Java for a second, before someone in the front row raises a hand: yes, Beam also has something running in the background to make this work. It's called `epmd` - the Erlang Port Mapper Daemon - and it genuinely is its own separate OS process. So let's be precise about what's actually different here, because "there's a background process" isn't the interesting part - both sides have one.
-
-`epmd`'s entire job is dumb and narrow: given a node name, tell me which port it's listening on. That's it. I never start it myself - it launches automatically, exactly once per machine, the first time any Beam node boots there, and every Beam program I ever run on that machine shares that same one instance. I've never written a line of code for it, configured it, or thought about its lifecycle.
-
-The thing that's actually doing `rmiregistry`'s job - "here's a name, tell me where the real service is" - isn't `epmd` at all. It's a module called `global`, and `global` needs zero separate processes, because it's just part of what every Beam node already is. There's nothing to stand up, and nothing to bind my service into by hand beyond a single function call - `global:register_name` - not "deploy and manage a registry."
-
-```sh
-erl -name central@127.0.0.1 -setcookie javazone_demo ...
-erl -name node2@127.0.0.1   -setcookie javazone_demo ...
-```
-
-And once they can see each other, sending a message to a process on another node uses the *same primitive* as sending to a process on your own node - there's no separate "remote call" API to learn, and no serialization step I had to write: the message is a plain custom type,
-
-```gleam
-pub type Message {
-  Query(reply_to: Pid, number: Int)
-  Reply(number: Int, result: String)
-}
-```
-
-and because every node is running byte-identical compiled code, that value crosses the network as itself and comes out the other side as the exact same typed value - no DTOs, no JSON, no protobuf schema, nothing to keep in sync by hand. (Don't worry about the exact syntax there yet - we'll get to actual Gleam properly in a minute. For now just notice: no annotations, no interface, just a plain data shape.)
-
-[Terminal 1, 2, 3 visible on screen - central plus two query nodes]
-
-So let's actually run it. `central` starts up and calls `global:register_name` for itself, under a well-known name. Two other nodes, `node2` and `node3`, start up, look that name up the same way, and start asking it numbers, once or twice a second, forever.
-
-[Show terminals: colour-coded output, node2 and node3 printing "asked about N -> ..."]
-
-Every line you're seeing here crossed a real network hop between separate operating system processes. Nothing here is simulated.
-
-[Show :observer attached to central - Nodes tab, then process list]
-
-I've also got Erlang/OTP's built-in `:observer` open here, attached to `central`. It ships with the runtime, no extra install - and it shows you, live, on a real running node: which other nodes are connected, the process list, mailbox sizes, memory. Watch the "Nodes" tab: `central`, `node2`, `node3`, all present.
-
-[Optional: run scripts/run-swarm.sh 20 - a wall of new nodes joining]
-
-And since the whole mechanism here is "any node that knows the name and the cookie can join in," it costs me nothing to stop pretending this only works for two or three nodes. Watch this:
-
-```sh
-scripts/run-swarm.sh 20
-```
-
-Twenty more nodes, started all at once, each independently finding `central` and starting to query it - no configuration change, no code change, nothing extra to deploy. Look at the "Nodes" tab again: twenty-one nodes now, all connected, all talking.
-
-[Kill central's terminal]
-
-Now, the part I actually want you to watch closely. I'm going to kill `central`. Not `node2`, not one of the twenty swarm nodes - the one node every single other node depends on.
-
-[Show query node terminals: "fizzbuzz server not reachable, retrying..."]
-
-Every querying node notices within a second or two, and every one of them does the same thing: it stops, and it waits. It does *not* silently skip ahead and start counting as if nothing happened - it keeps retrying the exact same question it was asking when `central` disappeared. Nobody wrote a retry-with-backoff library for this; it falls straight out of "if the process I'm registered-named isn't there, I don't have anyone to send to yet."
-
-[Restart central: scripts/run-central.sh]
-
-And now I bring `central` back.
-
-[Show query node terminals resuming from the exact same number]
-
-Watch: every node reconnects and resumes from *exactly* the number it was stuck on - not from 1, not skipping ahead. And I want to be precise about what just happened, because it's easy to wave your hands here: that `central` process is not the same process that died. It's a brand new one, a new pid, with no memory of anything that came before. Nobody migrated state, nobody restored a session. The only thing that made this recovery possible is that every query node keeps re-asking "who is `central` right now?" instead of caching an answer from thirty seconds ago.
-
-Compare that to the Java version from a minute ago: that's the same class of problem as "my service registry entry went stale" or "my client cached a connection to a pod that Kubernetes already replaced" - a real, well-known class of distributed-systems bug, and here it disappears because location was never something we hardcoded in the first place.
-
-(Speaker note: rehearse this end-to-end at least once on conference wifi before the actual talk - live clustering demos are exactly the kind of thing that breaks in front of an audience. Have a screen recording as a fallback in case the network does something weird. Also worth knowing: this demo's own code intentionally drops down to a couple of raw Erlang primitives - `global` and a plain, untyped send/receive - for the cross-node wiring specifically, because Gleam's own typed `Subject`/`Name` abstraction is built for processes already sharing one supervision tree, not for "a completely separately-started node wants to address me by name." Worth saying out loud if asked: this is the same raw, untyped mailbox layer Gleam usually protects you from, used on purpose for this one seam.)
-
-[Show "what you can steal" slide: Beam ideas next to their closest JVM equivalent]
-
-So, stepping back from the demo: what can we actually take from all this without leaving the JVM behind? You obviously can't rip the JVM out from under your application the way we just did on a slide. But you can steal the instinct: reach for what's already running in your own process - an in-memory cache like Caffeine, the structures already in `java.util.concurrent`, an embedded database like SQLite or H2 - before you reach for Redis or Kafka or an MQ for something genuinely small. Same "why do I need to involve three more teams for this" argument applies, Beam or no Beam.
-
-And on concurrency specifically: Java 21's virtual threads are the closest thing the JVM has to Beam's cheap processes for I/O-bound work, so that's a real, concrete piece of this you already have access to today. But I do want to be straight with you about one real gap, because someone in this room definitely knows their Loom internals: Beam's scheduler preempts every process on a fixed budget - "reductions" - so no single process can ever starve the others. Java's virtual threads don't give you that guarantee - a CPU-bound one can still hog its carrier thread. That's a genuine architectural difference, not just Beam being older and more mature.
-
 ___
 
 ### Let's learn some Gleam
 
-So we have this very cool VM that can do some neat stuff, but we need a language on top. The original language was Erlang, but a lot of people find Erlang to be a little esoteric for those of us that is used to the C-family of languages.
+Alright, for the thing we've all been waiting for: Gleam. Let's look at it.
+
+We have our cool VM, but we need a language on top. The original language was Erlang, but a lot of people find Erlang to be a little esoteric for those of us that is used to the C-family of languages.
 
 Then we have Elixir. A more modern take that borrows a lot of its ideas from Ruby. I really like Elixir, but I like to work with staticly typed languages. I enjoy using typing to make some conditions impossible. While Elixiri has a pretty good gradual type system, it isn't really as strict as I want.
 
@@ -281,67 +209,116 @@ And that JavaScript target isn't just a curiosity. It means the exact same Gleam
 
 ### A taste of the syntax
 
-[Show basic Gleam function slide]
+[Show demo snippet on screen - walk through live with arrows: main, greet, describe_age]
 
-Before we go further, let's actually look at some code, because I don't want to just tell you Gleam has "modern syntax" and expect you to take my word for it.
+Before we get into the bigger ideas, let's actually look at real code, because I don't want to just tell you Gleam has "modern syntax" and expect you to take my word for it.
 
 ```gleam
-pub fn double(x: Int) -> Int {
-  x * 2
+import gleam/io
+
+pub fn main() {
+  let message = greet("Alice")
+  let category = describe_age(27)
+
+  io.println(message)
+  io.println("Category: " <> category)
+}
+
+fn greet(name: String) -> String {
+  "Hello, " <> name
+}
+
+fn describe_age(age: Int) -> String {
+  case age >= 18 {
+    True -> "adult"
+    False -> "minor"
+  }
 }
 ```
 
-Nothing scary. A public function, a typed parameter, a typed return value. If you've touched Kotlin or TypeScript, this reads itself.
+(Walk through this live with arrows: `main` calling two small functions, `<>` for string concatenation, typed parameters and typed return values on every function. If you've touched Kotlin or TypeScript, most of this already reads itself.)
 
-Now, remember right at the start I asked: what do you do in a language with no loops? No if-statements? Here's the actual answer.
+### If statements? Not quite.
 
-[Show case-expression slide: pattern matching instead of if]
-
-Gleam doesn't have an `if` statement in the way Java does. It has `case`, which is pattern matching:
+Remember right at the start, I asked: what do you do in a language with no `if` statement? `describe_age` is the answer. Gleam doesn't have `if` the way Java or Kotlin does - it has `case`, which is pattern matching:
 
 ```gleam
-pub fn describe(n: Int) -> String {
+case age >= 18 {
+  True -> "adult"
+  False -> "minor"
+}
+```
+
+Here it's just matching on `True`/`False`, so it looks almost like an `if`. But it's the exact same mechanism we're about to see doing a lot more work - matching against shapes, not chaining conditions you have to trust yourself to get right, with the compiler checking you covered every case instead of you just hoping you did.
+
+[Show fizzbuzz slide]
+
+Let's push it a little further with something everyone already knows the rules to: fizzbuzz.
+
+```gleam
+import gleam/int
+
+pub fn compute(n: Int) -> String {
+  case n % 15, n % 3, n % 5 {
+    0, _, _ -> "FizzBuzz"
+    _, 0, _ -> "Fizz"
+    _, _, 0 -> "Buzz"
+    _, _, _ -> int.to_string(n)
+  }
+}
+```
+
+`case` isn't limited to matching one value at a time - here it's matching on three at once: `n % 15`, `n % 3`, and `n % 5`, all in the same expression. The underscore `_` means "I don't care what this one is." Read it top to bottom: divisible by 15, and the other two columns don't matter - "FizzBuzz". Otherwise check 3, then check 5. Otherwise, fall through to the plain number. Four branches, no nested if-else, and no "divisible by 3 and divisible by 5" duplicated by hand to fake the fizzbuzz case - the compiler still won't let you leave one of those branches out, same exhaustiveness guarantee as before, just with more moving parts.
+
+[Show fizzbuzz-with-guards slide]
+
+And `case` has one more trick worth showing, because it's easy to assume pattern matching only means "match this exact shape." It also does conditions, via a guard:
+
+```gleam
+pub fn compute(n: Int) -> String {
   case n {
-    0 -> "zero"
-    n if n > 0 -> "positive"
-    _ -> "negative"
+    n if n % 15 == 0 -> "FizzBuzz"
+    n if n % 3 == 0 -> "Fizz"
+    n if n % 5 == 0 -> "Buzz"
+    _ -> int.to_string(n)
   }
 }
 ```
 
-You're not writing a chain of conditions and hoping you covered every branch - you're matching against shapes, and as we just saw with custom types, the compiler will tell you if you missed one.
+Same fizzbuzz, same result, different shape: instead of matching on a tuple of three remainders, this matches on `n` itself, and each branch adds an `if` after the pattern - "bind this to `n`, but only take this branch if the condition holds." It reads almost like a normal `if`/`else if`/`else` chain again, except it's still one exhaustive `case`, the compiler still enforces that final catch-all `_`, and you're not nesting anything. Which style you reach for is mostly taste - the point is that `case` covers both "what shape is this" and "what's true about this," in the same construct, instead of needing a separate `if` for one and a `switch` for the other.
 
-[Show recursion / list.fold slide: no for-loop needed]
-
-And no loops? Two ways this gets solved. You can write a recursive function:
+And loops? Same story - no `for`, no `while` either. Two ways to fill that gap. Write the recursion yourself:
 
 ```gleam
-pub fn sum(numbers: List(Int)) -> Int {
+pub fn sum_recursive(numbers: List(Int)) -> Int {
+  sum_loop(numbers, 0)
+}
+
+fn sum_loop(numbers: List(Int), acc: Int) -> Int {
   case numbers {
-    [] -> 0
-    [first, ..rest] -> first + sum(rest)
+    [] -> acc
+    [first, ..rest] -> sum_loop(rest, acc + first)
   }
 }
 ```
 
-Or, more commonly in real Gleam code, you reach for the standard library and a pipe:
+Written this way on purpose: `sum_loop` calling itself is the very last thing that happens in that branch, nothing left to do once it returns. That's a genuine tail call, and the BEAM compiles a tail call into a jump, not a new stack frame - this runs in constant stack space no matter how long the list is. Or reach for the standard library, which already did the recursion for you:
 
 ```gleam
 import gleam/list
 
-pub fn total(numbers: List(Int)) -> Int {
-  numbers
-  |> list.fold(0, fn(acc, n) { acc + n })
+pub fn sum_builtin(numbers: List(Int)) -> Int {
+  list.fold(numbers, 0, fn(total, n) { total + n })
 }
 ```
 
-That `|>` is the pipe operator - it just passes the thing on its left into the first argument of the function on its right. Once you get used to reading top-to-bottom data pipelines instead of nested function calls, it's hard to go back. And notice there's no mutable accumulator variable you're updating in place anywhere in that code - everything here is immutable by default. You're not looping and mutating a counter; you're transforming a value into a new value, every step of the way. That's the "functional" part of "statically-typed, functional, immutable" earning its keep, not just a label on a slide.
+Same signature, same result, either way. In practice you almost always reach for the second one - `list.fold`, `list.map`, `list.filter` cover most of what a `for` loop would've done - and keep the hand-written recursion for the cases the library doesn't already have a name for.
 
 ### Typing
 
 [Show Gleam custom type slide: a closed set of variants]
 
-Let's talk about types for a second, because this is where a lot of Gleam's "aha" moments live for someone coming from Java or Kotlin.
+We have types in Java, so this is noything new to us, but I rarely see types being used to truly enforce correctness. Typing is much more than just checking if a paramtere is an int or a string, or type of class A. It is a tool we can use in our architecture to build reliable systems. In short: We can use types to make undesirable states impossible.
 
 Gleam has what it calls custom types - basically algebraic data types, or what you might know as sum types. You define a type as a closed set of variants, and the compiler knows about every single one of them.
 
@@ -353,7 +330,7 @@ pub type PaymentResult {
 }
 ```
 
-That's the whole type. Not "an object that might have a transaction ID, or might have a reason, or might be null, depending on what happened" - three explicit, named possibilities, and nothing else is allowed to exist.
+Here we should differentiate what a type is vs an object. There are no methods attached to these types. `Approved` is more or less a what we would call a struct or a named map.
 
 [Show exhaustive pattern match example]
 
@@ -369,7 +346,7 @@ pub fn describe_payment(result: PaymentResult) -> String {
 }
 ```
 
-If you forget to handle one of the variants - say you delete the `NetworkError` branch - Gleam simply won't compile. Not a warning, not a runtime surprise three months later when that code path finally gets hit in production - a compile error, right there, right now.
+If you forget to handle one of the variants - say you delete the `NetworkError` branch - Gleam simply won't compile. You won't get any further unless you cover all of the possible cases.
 
 If that sounds familiar, it should - Kotlin has sealed classes and sealed interfaces plus exhaustive `when` expressions, and Java has had sealed interfaces plus pattern matching for `switch` since Java 17, with exhaustiveness checking since Java 21. This isn't some exotic Gleam-only trick. The tools are already sitting in your JVM toolbox.
 
@@ -477,65 +454,84 @@ If you want the longer version of this, with more examples, I wrote it up in mor
 
 ### Errors when there are no exceptions
 
-Another thing about Gleam is that it has no exceptions. In Java we throw exceptions all over the place! A field not formatted the way we like? Exception! A number that is negative that shouldn't be negative? Exceptions! The database returning two things instead of one? Exceptions!
+Gleam has no exceptions. No `throw`, no `try`/`catch`. Errors are just values - `Ok` or `Error`, the same closed, two-variant custom type shape we just saw, built straight into the language. Not a new idea either: Go does the same thing with `(value, err)`, Rust with `Result<T, E>`.
 
-In the Java-world we essentially use exceptions as a hidden return type, wich is what they are unless you use checked exceptions... and those annoy most people, so it seems like most just opts out of that.
+This is basically Java's checked exceptions, and I mean that as more of a compliment than most people intend it. Checked exceptions had the right instinct - force the caller to deal with this - it just got a bad reputation because Java lets you cheat: wrap it, slap `throws Exception` on it, catch-and-swallow. Gleam's version keeps the same annoying-up-front honesty, minus the escape hatches. There's no `throws` clause to widen your way out of.
 
-Therefore we end up in a situation where exceptions becomes this secret thing that might happen that just breaks the flow of the application. I don't like that. Especially not when dependencies use the same pattern and may decide to just blow up your applicatio.
+[Show parse_age slide]
 
-I prefer developers having to decide whether or not to propegate an error. Doing so forces developers to make an active decision, which is healthy.
+```gleam
+import gleam/int
 
-And to be clear, this isn't some wild idea unique to Gleam or Erlang. Go does it with its `(value, err)` return pattern. Rust does it with `Result<T, E>`. Swift has typed throws now too. Modern language design has largely made this bet already - Java is actually the outlier here for still leaning so hard on unchecked exceptions.
+pub fn parse_age(input: String) -> Result(Int, String) {
+  case int.parse(input) {
+    Ok(age) if age < 0 -> Error("Cannot have negative age")
+    Ok(age) -> Ok(age)
+    Error(Nil) -> Error("\"" <> input <> "\" is not a number")
+  }
+}
+```
 
-Gleam solves this by having errors as values.
+One `case`, three branches, each one a different reason the input could be bad - a guard clause (`if age < 0`) attached right to the pattern, same trick from the fizzbuzz slide earlier. And to get anything out of this at all - the number, or the reason it failed - the caller has to handle every branch. That's not a style guide rule someone can skip under deadline pressure; the compiler won't let you touch the value without going through all three sides first.
 
-[Slide to Result type]
+[Show `use` slide: chaining several steps]
 
-Gleam uses a `Result` type, which is essentially a typed Tuple or Pair. It has one result in case there's a success, and one if there's a failure. 
+That's one function with one thing that can fail. What about several, chained together? That's where a bit of syntax called `use` earns its keep - here's the Email → RegisteredEmail → VerifiedEmail chain from earlier, actually wired together (every step's still a stub - I'm not faking a real email regex on a slide):
 
-To get to the success response we must also make a decision about what to do in case there's an error. In other words, we have to manage failure.
+```gleam
+import gleam/result
 
-I reckon most seasoned developers have had the scenario where a 500 HTTP response has been thrown, or the application has simply quit because it crashed due to an uncaught exception. This is not rare in the world of Java when all we use is unchecked exceptions. It has been culturaly acceptable to risk the operability of our systems because we don't want to deal with the errors.
+pub fn reset_password(input: String) -> Result(Nil, String) {
+  use email <- result.try(parse(input))
+  use registered <- result.try(find_registration(email))
+  use verified <- result.try(require_verified(registered))
+  Ok(send_password_reset(verified))
+}
+```
 
-Frameworks like Spring also assumes this, so they run the try-catch for us and formats the exception to the best of their ability, which is great, but also kinda unfortunate. Why can't we have control over our own code?
+One line per step, reading top to bottom like a script: run this, and if it fails, stop right here and hand back that error - otherwise unwrap the value and keep going with everything below it. No nesting, no `case` inside a `case`. If `parse` fails, `find_registration` never runs at all.
 
-There's a distinction worth being precise about here, because it's easy to lump "errors" and "exceptions" together as the same thing when they're not. An error is something expected - a user typed in a bad phone number, a lookup came back empty, an external API said no. A defect is something unexpected - a null reference, an index out of bounds, a bug. `Result` is built for the first category. It is deliberately not meant to replace the second - Gleam and Erlang still crash on those, hard, on purpose. That's exactly what "let it crash" is for, which is coming up next.
+[Show Kotlin equivalent]
 
-There is a meaningful distinction here though: Errors we can recover from get modelled as values and handled explicitly. Defects we can't meaningfully recover from get left to crash the process, on purpose, and dealt with structurally instead of defensively.
+```kotlin
+sealed interface ParseResult
+data class Parsed(val age: Int) : ParseResult
+data class ParseFailed(val reason: String) : ParseResult
 
-[Show Kotlin equivalent: Result<T> / Arrow Either]
+fun parseAge(input: String): ParseResult {
+    val age = input.toIntOrNull() ?: return ParseFailed("\"$input\" is not a number")
+    return if (age < 0) ParseFailed("Cannot have negative age") else Parsed(age)
+}
+```
 
-- Show Kotlin
+Same shape, same guarantee, just spelled with a `sealed interface` and an early return instead of a `case`. Kotlin's stdlib also ships a plain `Result<T>` if you don't want to declare your own type for this.
 
-The concrete move for your own code: for that first category - expected, recoverable failures like parsing, validation, or an external call that can legitimately fail - stop throwing for control flow, and return a value instead. Kotlin's stdlib already ships a `Result<T>`. Arrow gives you `Either`. Or just roll your own `sealed interface ApiResult<T>` with a `Success` and a `Failure` case. Combine that with the exhaustive `when` we just talked about, and the compiler forces every caller to handle both branches - you get Gleam's "you must decide" guarantee without leaving the JVM.
+[Show Java equivalent]
 
-### Let it crash
+And in case you're thinking this is a Kotlin-only trick - it isn't, plain Java gets you there too, since Java 21:
 
-Remember, back when we talked about Beam, I killed a whole node live and every other node just kept going, no null checks, no crash? That was this exact philosophy, one level up. Let's zoom in to the scale of a single process.
+```java
+sealed interface ParseResult permits Parsed, ParseFailed {}
+record Parsed(int age) implements ParseResult {}
+record ParseFailed(String reason) implements ParseResult {}
 
-"Let it crash" has been the mantra for Erlang since the 80s. The idea behind is that the world is messy, things happen and the unexpected will occur. Therefore, rather than building systems that assumes perfect conditions, we instead build systems where it is expected that things will crash.
+static ParseResult parseAge(String input) {
+    try {
+        int age = Integer.parseInt(input);
+        return age < 0 ? new ParseFailed("Cannot have negative age") : new Parsed(age);
+    } catch (NumberFormatException e) {
+        return new ParseFailed("\"" + input + "\" is not a number");
+    }
+}
+```
 
-So what does that mean in practice?
+`sealed interface` plus a couple of `record`s is Java's version of the same closed, two-shape type - and if you match on a `ParseResult` with a `switch` over `Parsed`/`ParseFailed`, the compiler demands both branches, same exhaustiveness guarantee as everywhere else today. One honest wrinkle worth naming out loud: `Integer.parseInt` still throws, because the standard library predates all of this - so the `try`/`catch` at the very boundary is genuinely still the cleanest option Java gives you. The point isn't that the exception never happens; it's that it gets caught immediately, right here, and converted into a value before it ever gets a chance to propagate anywhere - nothing downstream of `parseAge` ever sees a `NumberFormatException`, only a `ParseResult` it's forced to handle. Both mainstream JVM languages already have everything they need for this - today, not eventually.
 
-In the world of Gleam and Beam that means having supervisors watching over smaller worker threads. Like for example you might have worker threads that serves HTTP requests. If one of them dies, the supervisor will create a new one.
+[Show the stack-unwinding slide - Main / Method / Fragile Method]
 
-Since these are tiny processes, the restart is near instant, and no real downtime impacts the end user.
+Here's the actual reason any of this matters. Exceptions don't return, they unwind: a failure three frames down skips straight past everything in between and lands wherever the nearest `catch` happens to be. None of the skipped frames get a say, or even necessarily know it happened.
 
-Remember that we are talking about excetions here: The things we cannot meaningfully recover from, not even with Spring wrapped around it.
-
-In the world of Java we would see a total failure that takes down the entire VM. We'd usually run this in something like Kubernetes which would discover the crash and spin up a new container, but now we're looking at the start of the container itself and a complete fresh start of the JVM and whatever Spring needs to do on startup.
-
-This is mostly fine when running multiple instances and only one of them crashes, but it can have cascading effects as the time it takes for one instance to recover can impact other instances.
-
-[Show AXD301 supervision tree: flat vs. deeply nested]
-
-Now, a fair question: doesn't this same cascading problem exist on Beam too, just with supervised processes instead of containers? Yes, and it's worth being honest about that rather than pretending "let it crash" is magic. Ulf Wiger, the AXD301's chief software architect, found exactly this: restarting a failed process's entire supervision subtree can itself trigger cascading failures. It's actually why the real AXD301 supervision trees ended up deliberately flat, rather than the deeply nested trees you tend to see in textbook diagrams. OTP also has a specific mechanism to cap this: "restart intensity" - a supervisor will give up and escalate the failure upward if a child keeps restarting too many times within a time window, instead of looping forever.
-
-So the honest answer is: the problem doesn't disappear, but Beam gives you first-class, tunable primitives to contain it - restart strategies, intensity limits, flat supervision by design. A Kubernetes pod restart is a much blunter instrument by comparison. "Let it crash" isn't optimism, it's a philosophy backed by specific, tunable mechanisms.
-
-[Show structured concurrency slide: StructuredTaskScope / supervisorScope]
-
-You can't get true per-process isolation on the JVM - everything still shares one heap - but you can borrow the shape of the idea. Java 21's structured concurrency, via `StructuredTaskScope`, and Kotlin's `supervisorScope`, both let you isolate a failing child task so it doesn't drag its siblings or its parent down with it. The concrete change is to design your worker pools and coroutine scopes explicitly around "one bad task fails alone," instead of letting one uncaught exception unwind an entire request. And that restart-intensity idea - give up and escalate after N failures in a time window, instead of retrying forever - is a genuinely missing ingredient in a lot of hand-rolled Java retry loops I've seen. Worth stealing even if you never touch a supervision framework.
+A `Result` never skips anything. It goes up exactly the way every other return value does - one frame at a time - and every function in between stays in control: it looks at what came back and decides, explicitly, what to do next. Nothing invisible, nothing jumping over your code. You can understand what a function does by reading that function, not by knowing every `catch` block sitting above it in the call stack.
 
 ### Size matters
 
@@ -569,18 +565,18 @@ You obviously can't shrink Java's keyword count. But you can shrink your team's 
 
 ### Wrapping up
 
-[Show shared-nothing / immutability slide]
+[Show Takeaways slide]
 
-Before we close, two things I've been dancing around all talk that deserve to be said outright.
+So, if you walk out of here with nothing else, walk out with this list:
 
-First: everything we've talked about with processes and message passing only works because data in Erlang and Gleam is immutable by default, and processes share absolutely no memory with each other. That's the actual reason whole categories of concurrency bugs - races, torn reads, some other thread quietly mutating state out from under you - simply can't happen on Beam in the first place. It's also, honestly, the single most directly useful habit you can steal tonight even if you forget everything else: prefer `val` over `var`, reach for data classes and records, use persistent/immutable collections, and treat shared mutable state as the thing you actively design away from, not the default you fall back into.
+- Consider local tools before expensive adoptions. Check what's already sitting in your own process - a cache, a queue, an embedded database - before you reach for Kafka, Redis, or a new team to run something for you.
+- Use the type system to enforce correctness. Opaque types and phantom types in Gleam, a private constructor and a sealed interface on the JVM - same trick, push the check to where the value is created, not to every caller downstream.
+- Avoid using exceptions for things that are not exceptional. Model the failures you expect as values. Save exceptions for the ones you genuinely can't recover from.
+- Have a clear vision for what language features you actually need, and stick to them. Drive simplicity through restriction - a style guide and a linter rule buy you the same discipline on the JVM that a small language gives you by default.
+- And, obviously: give Gleam a try.
 
-[Show hot code upgrade slide]
+None of the first four require you to touch Gleam, or Beam, or ever leave the JVM. But it's exactly the kind of thing you only notice you're missing once you've looked at a language that doesn't let you get away without it.
 
-Second: remember right at the start, when I said Ericsson needed a language that supported upgrades without downtime? Beam actually delivers on that, literally - you can swap the code running on a live node without dropping a single connection. It's one of the most distinctive things about this whole ecosystem, and it's the actual reason Erlang exists in the first place: telecom switches couldn't just go down for a deploy. I'll be straight with you though: it's operationally fiddly in practice, and plenty of Elixir and Gleam shops just do blue/green deploys instead, same as you would on the JVM. So take it as a "here's what's possible," not a "here's what everyone actually does."
+[Show Thank You slide]
 
-[Show summary slide: what to steal for Monday]
-
-So, if you walk out of here with nothing else, walk out with this list: model your state with sealed types instead of nulls and flags. Return errors as values for the failures you expect, and save exceptions for the ones you don't. Design your concurrency around "one failure shouldn't take everyone down with it." And treat immutability as the default, not the exception. None of that requires you to touch Gleam, or Beam, or ever leave the JVM. But it's exactly the kind of thing you only notice you're missing once you've looked at a language that doesn't let you get away without it.
-
-Thank you.
+Thank you! Slides are up on lindbakk.com. And if you do give Gleam a try and end up liking it - it's built and maintained by a small team, so consider supporting it directly.
